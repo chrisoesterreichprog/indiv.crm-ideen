@@ -36,7 +36,7 @@ export function render(slot, ctx = {}) {
 
 function compact(ctx) {
   const items=getItems(ctx,'ideas'),withProject=items.filter(i=>i.projectId).length;
-  return {title:'Ideen-Inbox',primary:String(items.length)+' Ideen',secondary:String(withProject)+' einem Projekt zugeordnet',footer:'Ideen sortieren und weiterentwickeln',entries:items.slice(0,3).map(x=>({title:x.text,subtitle:x.projectId?'Projektidee':'Freie Idee'})),action:button('idea-dialog','+ Idee'),quick:'<button type="button" class="secondary-button" data-open-dialog="idea-dialog">Neue Idee notieren</button>'};
+  return {title:'Ideen-Inbox',primary:String(items.length)+' Ideen',secondary:String(withProject)+' einem Projekt zugeordnet',footer:'Ideen sortieren und weiterentwickeln',entries:items.slice(0,3).map(x=>({title:x.text,subtitle:x.projectId?'Projektidee':'Freie Idee'})),action:button('idea-dialog','+ Idee'),quick:'<form id="quick-idea" class="quick-idea compact-idea"><label for="quick-idea-text" class="sr-only">Idee notieren</label><input id="quick-idea-text" name="text" maxlength="1200" placeholder="Neue Idee ..." required><label for="quick-idea-project" class="sr-only">Projektzuordnung</label><select name="projectId" id="quick-idea-project" aria-label="Projektzuordnung"></select><button type="submit" class="primary-button">Speichern</button></form>'};
 }
 function renderWorkbench(ctx){
   const items=getItems(ctx,'ideas');
