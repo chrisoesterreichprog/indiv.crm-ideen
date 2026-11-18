@@ -18,7 +18,10 @@ jobs:
       github.event.issue.pull_request == null &&
       github.event.issue.number == 1 &&
       startsWith(github.event.comment.body, '@claude [model:')
-    runs-on: ubuntu-latest
+    # Hostinger is enabled only after a repository-scoped runner is registered
+    # and the owner sets AUSTRIQ_CLAUDE_RUNNER=hostinger for this repository.
+    # Otherwise preserve the original GitHub-hosted behavior.
+    runs-on: ${{ fromJSON(vars.AUSTRIQ_CLAUDE_RUNNER == 'hostinger' && '["self-hosted","Linux","X64","austriq-hostinger"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 300
     permissions:
       contents: write
