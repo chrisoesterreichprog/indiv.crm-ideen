@@ -1,0 +1,98 @@
+name: AUSTRIQ Claude Code v1.1.0 - owner-approved xhigh
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: austriq-claude-${{ github.repository }}-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  claude:
+    if: >-
+      github.actor == 'chrisoesterreichprog' &&
+      github.event.issue.pull_request == null &&
+      github.event.issue.number == 1 &&
+      startsWith(github.event.comment.body, '@claude [model:')
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      actions: read
+      id-token: write
+    steps:
+      - name: Checkout immutable dispatch policy
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate AUSTRIQ 11 sections and exact xhigh model
+        id: route
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          DISPATCH_COMMENT: ${{ github.event.comment.body }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+          body = os.environ.get('ISSUE_BODY', '')
+          lines = os.environ.get('DISPATCH_COMMENT', '').splitlines()
+          header = lines[0].strip() if lines else ''
+          match = re.fullmatch(r'@claude \[model:(opus|fable)\] \[effort:xhigh\]', header)
+          if not match:
+              sys.exit('::error::Only opus/fable xhigh owner dispatch is allowed')
+          required = [
+            'Strategisches Gesamtziel', 'Konkretes Ziel',
+            'Technischer Kontext', 'Scope', 'Aufwandsschätzung',
+            'Sicherheitsrestriktionen', 'Umsetzungsschritte',
+            'Definition of Done', 'Reproduzierbare Tests',
+            'Rollbackstrategie', 'Fortschritt in Prozent'
+          ]
+          if 'AUSTRIQ-CLAUDE-TASK v1.1.0' not in body or any(x not in body for x in required):
+              sys.exit('::error::Missing AUSTRIQ v1.1.0 issue sections')
+          model = {'opus':'claude-opus-5-5', 'fable':'claude-fable-5-2'}[match.group(1)]
+          if model not in body:
+              sys.exit('::error::Owner model does not match issue route')
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as file:
+              file.write(f'model={model}\neffort=xhigh\n')
+          print(f'Model route: {model}, effort: xhigh, no API fallback')
+          PY
+      - name: Check OAuth token only
+        shell: bash
+        env:
+          CLAUDE_AUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$CLAUDE_AUTH" ]; then
+            echo "::error::Missing CLAUDE_CODE_OAUTH_TOKEN in this repository; no paid key fallback."
+            exit 1
+          fi
+      - name: Checkout DEV baseline
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify safe repository baseline
+        run: |
+          test -f README.md
+          test -f CLAUDE.md
+          test "$(git branch --show-current)" = "dev"
+          git status --short
+      - name: Execute Claude Code with OAuth
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          base_branch: dev
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --model ${{ steps.route.outputs.model }}
+            --effort xhigh
+            --max-turns 300
+            --permission-mode acceptEdits
+            --allowedTools "Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(python3:*),Bash(pytest:*),Bash(mkdir:*),Bash(ls:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*)"
