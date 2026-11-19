@@ -12,6 +12,7 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "check": "node scripts/check.mjs",
+    "mutation": "node scripts/mutation.mjs",
     "preview": "node scripts/preview.mjs"
   },
   "engines": {

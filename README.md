@@ -47,11 +47,14 @@ Originalaudio (opaque Media-Ref) und Transkript sind getrennte Artefakte: Transk
 
 `idea.create`, `idea.update`, `idea.setTranscript`, `idea.assignProject`, `idea.move`, `idea.delete` – reiner Reducer, liefert `{ ok, state, event }` oder `{ ok: false, code }` (`unauthenticated`, `revoked`, `not_found` für fremde Mandanten, `forbidden`, `project_forbidden`, `bad_ref`, `conflict` bei veralteter `expectedRevision`, …). Events enthalten nur Refs/Feldnamen, niemals Text oder Transkript; `idea.deleted` meldet `mediaRefs` zur serverseitigen Löschung. Der Host führt Befehle serverseitig aus; `commandFromForm()`/`commandFromAction()` übersetzen die gerenderten Formulare und Buttons.
 
+- `idea.move` mit `direction: 'up' | 'down'` verschiebt **innerhalb der Workbench-Spalte** (gleiches sichtbares Projekt bzw. Inbox) und überspringt Ideen anderer Projekte; am Spaltenrand → `no_change` (Buttons sind dort `disabled`). `toIndex` bleibt eine absolute Position in der Gesamtliste der Person (kompakte Views).
+- Optimistische Nebenläufigkeit: Alle verändernden Controls tragen `data-expected-revision`. Der Host übergibt `commandFromAction(action, { ...element.dataset, value: element.value })`; ein veralteter Stand ergibt `conflict` statt eines überschriebenen/gelöschten neueren Stands. Nur nicht-negative Ganzzahlen werden akzeptiert (`parseRevision`).
+
 ## Drag & Drop und Übergaben
 
-- Drag-Quellen tragen nur `data-drag-ref="austriq:idea:…"`; Ziele `data-drop-target="project:<id>" | "project:inbox" | "transfer:<learn|experience|studio|calendar>"`.
+- Drag-Quellen tragen nur `data-drag-ref="austriq:idea:…"`; Ziele `data-drop-target="inbox" | "project:<id>" | "transfer:<learn|experience|studio|calendar>"` (`INBOX_TARGET_ID`, `projectTargetId()`). Die Inbox liegt bewusst außerhalb des `project:`-Namensraums, damit ein Projekt mit der ID `inbox` nie als „Projekt entfernen“ gedeutet wird.
 - `dragReducer` bildet Tastatur (Leertaste/Enter anheben, Pfeile/Home/End wählen, Enter wählen, Escape/Tab abbrechen) und Pointer-Drops ab, inkl. Ansagen für die `aria-live`-Region.
-- `resolveDrop()` führt nie etwas aus: Projekt-Drops werden zu `{ kind: 'command', requiresConfirmation: true }`, Modul-Drops zu einem Workflow-Proposal `{ contract: 'austriq.workflow.proposal@0-provisional', type: 'ideas.transfer.requested', idempotencyKey, requiresConfirmation: true, payload: { ref, projectRef, kind, hasAudio, transcriptStatus } }`. Bestätigung, Berechtigung, Ausführung und Undo liegen bei `indiv.crm-workflows#1` bzw. CRM-Host #18. Ohne `workflow:propose` werden keine Übergabeziele angeboten.
+- `resolveDrop()` führt nie etwas aus: Projekt-Drops werden zu `{ kind: 'command', requiresConfirmation: true, command: { …, expectedRevision } }` (Revision zum Zeitpunkt des Drops – ändert sich die Idee vor der Bestätigung, liefert der Befehl `conflict`), Modul-Drops zu einem Workflow-Proposal `{ contract: 'austriq.workflow.proposal@0-provisional', type: 'ideas.transfer.requested', idempotencyKey, requiresConfirmation: true, payload: { ref, projectRef, kind, hasAudio, transcriptStatus } }`. `idempotencyKey = ideas.transfer:<tenantId>:<ideaId>:<target>:r<revision>` – mandantengebunden, weil Idee-IDs nur je Mandant eindeutig sind. Bestätigung, Berechtigung, Ausführung und Undo liegen bei `indiv.crm-workflows#1` bzw. CRM-Host #18. Ohne `workflow:propose` werden keine Übergabeziele angeboten.
 
 ## Sprachideen (whispr-Bridge)
 
@@ -59,13 +62,14 @@ Originalaudio (opaque Media-Ref) und Transkript sind getrennte Artefakte: Transk
 
 ## Host-Hooks im Markup
 
-`data-ideas-form="quick-capture | edit | transcript | settings"`, `data-action="idea.assignProject | idea.move | idea.pickUp | idea.delete (data-confirm) | voice.start | voice.stop | voice.requestConsent | voice.play | voice.retranscribe | ideas.completeSetup | ideas.openSettings"`, `data-open-dialog="idea-dialog"`, `.widget-open[data-module="ideas"]`. Der Legacy-Slot `footer-right` behält `form#quick-idea`.
+`data-ideas-form="quick-capture | edit | transcript | settings"`, `data-action="idea.assignProject | idea.move | idea.pickUp | idea.delete (data-confirm) | voice.start | voice.stop | voice.requestConsent | voice.play | voice.retranscribe | ideas.completeSetup | ideas.openSettings"` (verändernde Actions mit `data-ref` + `data-expected-revision`), `data-open-dialog="idea-dialog"`, `.widget-open[data-module="ideas"]`. Der Legacy-Slot `footer-right` behält `form#quick-idea`. Kompakte Einträge kürzen den Titel auf `COMPACT_TITLE_MAX` (80) Zeichen; der volle Text steht in der Workbench.
 
 ## Prüfen
 
 ```sh
 npm test         # Node-Tests: Vertrag, adaptive Größen, Domain, negative AuthZ, Voice, DnD, Privacy
 npm run check    # Syntaxprüfung aller Dateien + Render-Smoke über alle Ziele
+npm run mutation # schaltet je einen Sicherheits-Guard ab und erwartet rote Tests (Mandant, Widerruf, Consent, Shield, Revision, …)
 npm run preview  # schreibt preview/index.html (statisch, synthetisch) für Browser-/Tastaturchecks
 ```
 
