@@ -17,11 +17,12 @@ jobs:
       github.actor == 'chrisoesterreichprog' &&
       github.event.issue.pull_request == null &&
       github.event.issue.number == 1 &&
-      startsWith(github.event.comment.body, '@claude [model:')
+      startsWith(github.event.comment.body, '@claude [model:opus] [effort:xhigh]')
     # Hostinger is enabled only after a repository-scoped runner is registered
     # and the owner sets AUSTRIQ_CLAUDE_RUNNER=hostinger for this repository.
     # Otherwise preserve the original GitHub-hosted behavior.
-    runs-on: ${{ fromJSON(vars.AUSTRIQ_CLAUDE_RUNNER == 'hostinger' && '["self-hosted","Linux","X64","austriq-hostinger"]' || '["ubuntu-latest"]') }}
+    # Owner-only Opus/xhigh; Hostinger-only (no hosted fallback)
+    runs-on: [self-hosted, Linux, X64, austriq-hostinger]
     timeout-minutes: 300
     permissions:
       contents: write
@@ -94,7 +95,7 @@ jobs:
           additional_permissions: |
             actions: read
           claude_args: |
-            --model ${{ steps.route.outputs.model }}
+            --model claude-opus-5-5
             --effort xhigh
             --max-turns 300
             --permission-mode acceptEdits
