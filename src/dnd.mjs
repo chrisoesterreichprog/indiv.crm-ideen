@@ -2,12 +2,15 @@
 // writes. Every drop resolves to a confirmation-required command (project reassignment within
 // Ideen) or a workflow proposal (other modules). Nothing is executed automatically.
 import { deepFreeze } from './html.mjs';
-import { applyIdeaCommand, cleanText, parseIdeaRef, stateFromContext, tenantScope, visibleProjects } from './ideas.mjs';
+import { applyIdeaCommand, authorizeIdea, cleanText, parseIdeaRef, revisionOf, stateFromContext, tenantScope, visibleProjects } from './ideas.mjs';
 import { enabledTransferTargets, proposeTransfer } from './transfer.mjs';
 
 export const DRAG_HELP = 'Leertaste oder Enter hebt die Idee an. Pfeiltasten wählen ein Ziel, Enter wählt es aus, Escape bricht ab. Ausgeführt wird erst nach Bestätigung.';
 export const DRAG_IDLE = Object.freeze({ mode: 'idle', announcement: '' });
-export const INBOX_TARGET_ID = 'project:inbox';
+// Deliberately outside the `project:` namespace: a project with the id "inbox" must stay a
+// project target and can never be confused with "remove project assignment".
+export const INBOX_TARGET_ID = 'inbox';
+export const projectTargetId = projectId => 'project:' + projectId;
 
 const fail = code => Object.freeze({ ok: false, code });
 const validTarget = t => t && typeof t.id === 'string' && typeof t.label === 'string';
@@ -18,7 +21,7 @@ export function dropTargets(ctx) {
   const projects = visibleProjects(stateFromContext(ctx).projects, scope);
   return deepFreeze([
     { id: INBOX_TARGET_ID, kind: 'project', projectId: null, label: 'Inbox (ohne Projekt)' },
-    ...projects.map(p => ({ id: 'project:' + p.id, kind: 'project', projectId: p.id, label: cleanText(String(p.name ?? '')) || 'Projekt' })),
+    ...projects.map(p => ({ id: projectTargetId(p.id), kind: 'project', projectId: p.id, label: cleanText(String(p.name ?? '')) || 'Projekt' })),
     ...enabledTransferTargets(ctx).map(t => ({ id: 'transfer:' + t.id, kind: 'transfer', target: t.id, label: t.label })),
   ]);
 }
@@ -90,9 +93,14 @@ export function resolveDrop(ctx, drop) {
     const outcome = proposeTransfer(ctx, { ref: drop.ref, target: target.target });
     return outcome.ok ? Object.freeze({ ok: true, kind: 'proposal', requiresConfirmation: true, proposal: outcome.proposal }) : outcome;
   }
-  const command = Object.freeze({ type: 'idea.assignProject', ref: drop.ref, projectId: target.projectId });
+  const state = stateFromContext(ctx);
+  const found = authorizeIdea(state, ctx?.actor, drop.ref);
+  if (found.code) return fail(found.code);
+  // The dragged revision is pinned: if the idea changes before the person confirms, the host
+  // gets `conflict` instead of silently reassigning a newer version.
+  const command = Object.freeze({ type: 'idea.assignProject', ref: drop.ref, projectId: target.projectId, expectedRevision: revisionOf(found.idea) });
   // Dry run for validation/authorization only; the result is discarded and nothing is persisted.
-  const check = applyIdeaCommand(stateFromContext(ctx), command, ctx?.actor);
+  const check = applyIdeaCommand(state, command, ctx?.actor);
   if (!check.ok) return check;
   return Object.freeze({ ok: true, kind: 'command', requiresConfirmation: true, command });
 }

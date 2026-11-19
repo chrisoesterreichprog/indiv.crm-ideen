@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyIdeaCommand, commandFromAction, commandFromForm, ideaRef, parseIdeaRef, cleanText, visibleIdeas, tenantScope } from '../src/index.mjs';
-import { alice, bob, clock, fixture } from './fixtures.mjs';
+import { applyIdeaCommand, commandFromAction, commandFromForm, ideaRef, parseIdeaRef, parseRevision, cleanText, render, visibleIdeas, tenantScope } from '../src/index.mjs';
+import { alice, bob, clock, ctxFor, fixture } from './fixtures.mjs';
 
 const run = (state, command, actor = alice) => applyIdeaCommand(state, command, actor, { now: clock });
 const byId = (state, id) => state.ideas.find(i => i.id === id);
@@ -102,19 +102,88 @@ test('project can be switched and cleared', () => {
 });
 
 test('ideas can be moved inside the inbox (reorder)', () => {
-  const state = fixture();
   const order = s => visibleIdeas(s.ideas, s.projects, tenantScope({ actor: alice })).map(i => i.id);
-  assert.deepEqual(order(state), ['i-text', 'i-voice', 'i-shared']);
-  let result = run(state, commandFromAction('idea.move', { ref: 'austriq:idea:i-text', direction: 'down' }));
+  // a second Inbox idea (newest on top) next to the existing Inbox voice idea
+  let result = run(fixture(), { type: 'idea.create', id: 'n-inbox', text: 'Zweite Inbox-Idee' });
+  const state = result.state;
+  assert.deepEqual(order(state), ['n-inbox', 'i-text', 'i-voice', 'i-shared']);
+  // ↓ skips the Alpha idea in between: it swaps with the next idea of the same (Inbox) lane
+  result = run(state, commandFromAction('idea.move', { ref: 'austriq:idea:n-inbox', direction: 'down' }));
   assert.equal(result.ok, true);
-  assert.deepEqual(order(result.state), ['i-voice', 'i-text', 'i-shared']);
+  assert.deepEqual(order(result.state), ['i-text', 'i-voice', 'n-inbox', 'i-shared']);
+  assert.equal(result.event.position, 2);
+  result = run(result.state, { type: 'idea.move', ref: 'austriq:idea:n-inbox', direction: 'up' });
+  assert.deepEqual(order(result.state), ['i-text', 'n-inbox', 'i-voice', 'i-shared']);
+  // `toIndex` stays an absolute position in the overall list (compact views)
   result = run(result.state, { type: 'idea.move', ref: 'austriq:idea:i-shared', toIndex: 0 });
-  assert.deepEqual(order(result.state), ['i-shared', 'i-voice', 'i-text']);
-  assert.equal(run(result.state, { type: 'idea.move', ref: 'austriq:idea:i-shared', direction: 'up' }).code, 'no_change');
+  assert.deepEqual(order(result.state), ['i-shared', 'i-text', 'n-inbox', 'i-voice']);
+  assert.equal(run(result.state, { type: 'idea.move', ref: 'austriq:idea:i-shared', toIndex: 0 }).code, 'no_change');
   assert.equal(run(result.state, { type: 'idea.move', ref: 'austriq:idea:i-shared' }).code, 'bad_position');
   // ideas of other users/tenants keep their order untouched
   assert.equal(byId(result.state, 'i-bob').order, 3);
   assert.equal(byId(result.state, 'i-foreign').order, 0);
+});
+
+test('↑/↓ never jump across project lanes (visible no-op is refused, revision unchanged)', () => {
+  const state = fixture();
+  // Alpha, Inbox and Shared each hold a single idea for alice: nothing to swap with
+  for (const [ref, direction] of [['i-text', 'down'], ['i-text', 'up'], ['i-voice', 'up'], ['i-voice', 'down'], ['i-shared', 'up']]) {
+    assert.equal(run(state, { type: 'idea.move', ref: 'austriq:idea:' + ref, direction }).code, 'no_change', ref + ' ' + direction);
+  }
+  assert.equal(byId(state, 'i-text').revision, 1);
+  // an idea in a project the viewer is no member of sits in the viewer's Inbox lane
+  const hidden = fixture();
+  hidden.ideas.push({ id: 'i-own-hidden', tenantId: 'tenant-a', ownerId: 'user-a1', projectId: 'p-bob', text: 'Eigene Idee im fremden Projekt', order: 5, revision: 1 });
+  const moved = run(hidden, { type: 'idea.move', ref: 'austriq:idea:i-own-hidden', direction: 'up' });
+  assert.equal(moved.ok, true);
+  const order = visibleIdeas(moved.state.ideas, moved.state.projects, tenantScope({ actor: alice })).map(i => i.id);
+  assert.ok(order.indexOf('i-own-hidden') < order.indexOf('i-voice'), 'swapped with the Inbox neighbour');
+  assert.ok(order.indexOf('i-own-hidden') > order.indexOf('i-text'), 'Alpha idea untouched');
+});
+
+test('actions carry the rendered revision so stale views cannot delete, move or reassign', () => {
+  const state = fixture();
+  const edited = run(state, { type: 'idea.update', ref: 'austriq:idea:i-text', text: 'von jemand anderem geändert' }).state;
+  const stale = { ref: 'austriq:idea:i-text', expectedRevision: '1' }; // as read from `dataset`
+  assert.equal(run(edited, commandFromAction('idea.delete', stale)).code, 'conflict');
+  assert.equal(run(edited, commandFromAction('idea.assignProject', { ...stale, value: 'p-shared' })).code, 'conflict');
+  assert.equal(run(edited, commandFromAction('idea.move', { ...stale, direction: 'down' })).code, 'conflict');
+  assert.ok(byId(edited, 'i-text'), 'nothing deleted');
+  assert.equal(run(edited, commandFromAction('idea.delete', { ...stale, expectedRevision: '2' })).ok, true);
+  // only plain non-negative integers count; garbage is ignored instead of guessed
+  for (const bad of ['1abc', '-1', '1.5', ' 1', '', 'NaN', -1, 1.5, null, {}]) {
+    assert.equal(parseRevision(bad), undefined, String(bad));
+    assert.equal('expectedRevision' in commandFromAction('idea.delete', { ...stale, expectedRevision: bad }), false);
+  }
+  assert.equal(parseRevision('0'), 0);
+  assert.equal(parseRevision(7), 7);
+  assert.equal(commandFromForm('edit', { ref: 'austriq:idea:i-text', expectedRevision: '2x', text: 'x' }).expectedRevision, undefined);
+  // the workbench renders the guard on every mutating control
+  const html = render('center', ctxFor(alice));
+  for (const action of ['idea.assignProject', 'idea.move', 'idea.delete']) {
+    const controls = [...html.matchAll(new RegExp(`<(?:button|select)[^>]*data-action="${action}"[^>]*>`, 'g'))].map(m => m[0]);
+    assert.ok(controls.length >= 3, action);
+    for (const control of controls) assert.match(control, /data-expected-revision="\d+"/, action);
+  }
+});
+
+test('commandFromAction never throws for missing or hostile data', () => {
+  for (const data of [null, undefined, 'x', 42, []]) {
+    assert.deepEqual(commandFromAction('idea.move', data), { type: 'idea.move', ref: undefined, direction: undefined });
+    assert.equal(run(fixture(), commandFromAction('idea.delete', data)).code, 'bad_ref');
+  }
+});
+
+test('workbench disables ↑/↓ at the edges of each lane', () => {
+  const state = run(fixture(), { type: 'idea.create', id: 'n-inbox', text: 'Zweite Inbox-Idee' }).state;
+  const html = render('center', ctxFor(alice, state));
+  const control = (ref, direction) => html.match(new RegExp(`<button[^>]*data-ref="austriq:idea:${ref}"[^>]*data-direction="${direction}"[^>]*>`))[0];
+  assert.match(control('n-inbox', 'up'), /\sdisabled/);
+  assert.doesNotMatch(control('n-inbox', 'down'), /\sdisabled/);
+  assert.doesNotMatch(control('i-voice', 'up'), /\sdisabled/);
+  assert.match(control('i-voice', 'down'), /\sdisabled/);
+  assert.match(control('i-text', 'up'), /\sdisabled/);
+  assert.match(control('i-text', 'down'), /\sdisabled/);
 });
 
 test('delete removes the idea and reports media refs for host-side cleanup', () => {

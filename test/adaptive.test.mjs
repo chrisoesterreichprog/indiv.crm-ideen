@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { render, sizeClassFor, normalizeDimensions, manifest, SIZE_CLASSES } from '../src/index.mjs';
+import { render, sizeClassFor, normalizeDimensions, manifest, SIZE_CLASSES, COMPACT_TITLE_MAX } from '../src/index.mjs';
 import { alice, ctxFor, duplicateIds, unlabelledControls } from './fixtures.mjs';
 
 const sizeOf = html => html.match(/data-size="(xs|s|m|l)"/)?.[1];
@@ -81,6 +81,19 @@ test('all legacy slots and rails render together without id collisions', () => {
   const ctx = ctxFor(alice);
   const html = [...manifest.slots, ...manifest.rails].map(target => render(target, ctx)).join('');
   assert.deepEqual(duplicateIds(html), []);
+});
+
+test('compact rows shorten long titles without splitting characters; the workbench keeps the full text', () => {
+  const long = '😀'.repeat(100);
+  const ctx = { ideas: [{ id: 'long', text: long, order: 1 }, { id: 'lines', text: 'Zeile eins\nZeile zwei', order: 2 }] };
+  const html = render('right', ctx, { width: 480, height: 600 });
+  const titles = [...html.matchAll(/<strong>([^<]*)<\/strong><small>/g)].map(m => m[1]);
+  assert.equal(titles.length, 2);
+  assert.equal(Array.from(titles[0]).length, COMPACT_TITLE_MAX);
+  assert.ok(titles[0].endsWith('…'));
+  assert.doesNotMatch(titles[0], /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/, 'no lone surrogates');
+  assert.equal(titles[1], 'Zeile eins Zeile zwei');
+  assert.ok(render('center', ctx).includes(long), 'workbench shows the full idea');
 });
 
 test('compact entries are keyboard focusable drag sources with instructions', () => {

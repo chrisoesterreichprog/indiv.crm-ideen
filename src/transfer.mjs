@@ -50,8 +50,10 @@ export function proposeTransfer(ctx, input) {
     proposal: deepFreeze({
       contract: PROPOSAL_CONTRACT,
       type: PROPOSAL_TYPE,
-      // Same idea revision + target ⇒ same key, so repeated drops cannot create duplicates.
-      idempotencyKey: `ideas.transfer:${idea.id}:${input.target}:r${revision}`,
+      // Same tenant + idea revision + target ⇒ same key, so repeated drops cannot create
+      // duplicates. Idea ids are only unique per tenant, hence the tenant scope: a proposal of
+      // one tenant can never be deduplicated against (or answered with) another tenant's result.
+      idempotencyKey: `ideas.transfer:${c.actor.tenantId}:${idea.id}:${input.target}:r${revision}`,
       requiresConfirmation: true,
       status: 'proposed',
       source: { module: 'ideas', ref, revision },

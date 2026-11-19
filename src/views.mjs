@@ -3,11 +3,11 @@
 // CRM host owns event wiring, DnD transport, layout persistence, resize and size limits.
 // No fixed slot numbers and no global resize logic live here — only the given dimensions count.
 import { deepFreeze, domId, escapeHtml as e } from './html.mjs';
-import { cleanText, ideaRef, isMediaRef, revisionOf, stateFromContext, tenantScope, TEXT_MAX, TRANSCRIPT_MAX, visibleIdeas, visibleProjects } from './ideas.mjs';
+import { cleanText, ideaRef, isMediaRef, laneOf, revisionOf, stateFromContext, tenantScope, TEXT_MAX, TRANSCRIPT_MAX, visibleIdeas, visibleProjects } from './ideas.mjs';
 import { normalizeSettings, TRANSFER_TARGET_IDS, VOICE_DURATION_LIMITS } from './settings.mjs';
 import { voiceStatus, VOICE_MESSAGES } from './voice.mjs';
 import { enabledTransferTargets, TRANSFER_TARGETS, WORKFLOW_CAPABILITY } from './transfer.mjs';
-import { DRAG_HELP, INBOX_TARGET_ID } from './dnd.mjs';
+import { DRAG_HELP, INBOX_TARGET_ID, projectTargetId } from './dnd.mjs';
 
 export const RAILS = Object.freeze(['top', 'bottom', 'left', 'right']);
 export const SIZE_CLASSES = Object.freeze(['xs', 's', 'm', 'l']);
@@ -16,6 +16,8 @@ export const SIZE_THRESHOLDS = deepFreeze({ xs: { width: 160, height: 72 }, s: {
 const RAIL_DEFAULTS = deepFreeze({ top: { width: 360, height: 120 }, bottom: { width: 288, height: 160 }, left: { width: 280, height: 260 }, right: { width: 320, height: 260 } });
 const MAX_DIMENSION = 10000;
 const ENTRY_LIMITS = Object.freeze({ xs: 0, s: 0, m: 2, l: 5 });
+/** Compact rails show a shortened title; the full text stays in the Workbench. */
+export const COMPACT_TITLE_MAX = 80;
 
 /** v1 default preset: legacy slot → rail + nominal size. Only a compatibility adapter. */
 export const LEGACY_SLOT_PRESETS = deepFreeze({
@@ -65,6 +67,7 @@ function buildModel(ctx) {
   return {
     denied: scope.mode === 'deny',
     projects,
+    projectIds: new Set(projects.map(p => p.id)),
     projectNames: new Map(projects.map(p => [p.id, cleanText(String(p.name ?? '')) || 'Projekt'])),
     ideas: visibleIdeas(raw.ideas, raw.projects, scope),
     settings: normalizeSettings(ctx.settings),
@@ -76,6 +79,11 @@ function buildModel(ctx) {
 }
 
 const ideaTitle = idea => cleanText(String(idea.text ?? '')) || (idea.audio ? 'Sprachidee' : 'Idee');
+/** Shortens by code points (never splits surrogate pairs) and collapses line breaks for one-line rows. */
+function shortTitle(idea) {
+  const chars = Array.from(ideaTitle(idea).replace(/\s+/g, ' '));
+  return chars.length > COMPACT_TITLE_MAX ? chars.slice(0, COMPACT_TITLE_MAX - 1).join('').trimEnd() + '…' : chars.join('');
+}
 const projectLabel = (model, idea) => (idea.projectId ? model.projectNames.get(idea.projectId) ?? 'Projekt nicht verfügbar' : 'Freie Idee');
 const dateLabel = idea => (idea.createdAt ? String(idea.createdAt).slice(0, 10) : 'Idee');
 const defaultProject = model => (model.projectNames.has(model.settings.defaultProjectId) ? model.settings.defaultProjectId : null);
@@ -122,7 +130,7 @@ function compactEntry(model, idea, helpId) {
   const badges = (idea.audio ? '<span class="idea-badge">Audio</span>' : '')
     + (idea.transcript?.status === 'ready' ? '<span class="idea-badge">Transkript</span>' : '');
   return '<li class="item-row idea-entry" data-ref="' + e(ref) + '" data-drag-ref="' + e(ref) + '" draggable="true" tabindex="0" aria-describedby="' + e(helpId) + '">'
-    + '<span class="item-copy"><strong>' + e(ideaTitle(idea)) + '</strong><small>' + e(projectLabel(model, idea)) + '</small></span>' + badges + '</li>';
+    + '<span class="item-copy"><strong>' + e(shortTitle(idea)) + '</strong><small>' + e(projectLabel(model, idea)) + '</small></span>' + badges + '</li>';
 }
 
 function renderCompact(model, rail, dimensions, legacySlot) {
@@ -169,7 +177,7 @@ function transcriptBlock(idea, idBase) {
   return '<div class="idea-transcript" data-transcript-status="' + e(t.status) + '"><span class="eyebrow">Transkript</span><small id="' + e(idBase + '-transcript-status') + '">' + e(label) + '</small>' + retry + '</div>';
 }
 
-function ideaCard(model, idea, prefix) {
+function ideaCard(model, idea, prefix, position = { first: false, last: false }) {
   const ref = ideaRef(idea.id);
   const base = prefix + '-idea-' + idea.id;
   const revision = revisionOf(idea);
@@ -185,18 +193,21 @@ function ideaCard(model, idea, prefix) {
       + '<textarea id="' + e(base + '-transcript') + '" name="transcript" maxlength="' + TRANSCRIPT_MAX + '" rows="4">' + e(idea.transcript?.status === 'ready' ? cleanText(String(idea.transcript.text ?? '')) : '') + '</textarea>'
       + '<button type="submit" class="text-button">Transkript speichern</button></form>'
     : '';
-  const button = (action, label, extra = '') => '<button type="button" class="text-button" data-action="' + action + '" data-ref="' + e(ref) + '"' + extra + '>' + label + '</button>';
+  // Mutating controls carry the rendered revision: a stale view yields `conflict`, never a lost update.
+  const guarded = ' data-ref="' + e(ref) + '" data-expected-revision="' + revision + '"';
+  const button = (action, label, extra) => '<button type="button" class="text-button" data-action="' + action + '"' + extra + '>' + label + '</button>';
   return '<li class="idea-work-card" data-ref="' + e(ref) + '" data-drag-ref="' + e(ref) + '" draggable="true" tabindex="0" aria-labelledby="' + e(base + '-title') + '" aria-describedby="' + e(prefix + '-dnd-help') + '">'
     + '<span class="eyebrow">' + e(projectLabel(model, idea)) + '</span>'
     + '<p id="' + e(base + '-title') + '" class="idea-text">' + e(ideaTitle(idea)) + '</p>'
     + audio + transcript
     + '<small>' + e(dateLabel(idea)) + '</small>'
     + '<div class="idea-card-controls">'
-    + '<label for="' + e(base + '-project') + '">Projekt</label><select id="' + e(base + '-project') + '" data-action="idea.assignProject" data-ref="' + e(ref) + '">' + projectOptions(model, idea.projectId ?? null) + '</select>'
-    + button('idea.move', '↑', ' data-direction="up" aria-label="Idee nach oben verschieben"')
-    + button('idea.move', '↓', ' data-direction="down" aria-label="Idee nach unten verschieben"')
-    + button('idea.pickUp', 'Verschieben …', ' aria-describedby="' + e(prefix + '-dnd-help') + '"')
-    + button('idea.delete', 'Löschen', ' data-confirm="Idee löschen? Originalaudio und Transkript werden ebenfalls entfernt."')
+    + '<label for="' + e(base + '-project') + '">Projekt</label><select id="' + e(base + '-project') + '" data-action="idea.assignProject"' + guarded + '>' + projectOptions(model, laneOf(idea, model.projectIds)) + '</select>'
+    // ↑/↓ move within the column; at its edges they are disabled instead of silently doing nothing.
+    + button('idea.move', '↑', guarded + ' data-direction="up" aria-label="Idee innerhalb der Spalte nach oben verschieben"' + (position.first ? ' disabled' : ''))
+    + button('idea.move', '↓', guarded + ' data-direction="down" aria-label="Idee innerhalb der Spalte nach unten verschieben"' + (position.last ? ' disabled' : ''))
+    + button('idea.pickUp', 'Verschieben …', ' data-ref="' + e(ref) + '" aria-describedby="' + e(prefix + '-dnd-help') + '"')
+    + button('idea.delete', 'Löschen', guarded + ' data-confirm="Idee löschen? Originalaudio und Transkript werden ebenfalls entfernt."')
     + '</div>'
     + '<details class="idea-edit"><summary>Bearbeiten</summary>'
     + '<form data-ideas-form="edit">' + hidden + '<label for="' + e(base + '-text') + '">Notiz</label>'
@@ -206,11 +217,12 @@ function ideaCard(model, idea, prefix) {
 }
 
 function lane(model, group, ideas, prefix) {
-  const key = group.id ?? 'inbox';
-  const headingId = prefix + '-lane-' + key;
-  return '<section class="idea-lane" data-drop-target="' + e(group.id ? 'project:' + group.id : INBOX_TARGET_ID) + '" aria-labelledby="' + e(headingId) + '">'
+  // Inbox and project lanes live in separate namespaces, so a project whose id is "inbox"
+  // can neither shadow the Inbox drop target nor duplicate its heading id.
+  const headingId = prefix + '-lane-' + (group.id ? 'p-' + group.id : 'inbox');
+  return '<section class="idea-lane" data-drop-target="' + e(group.id ? projectTargetId(group.id) : INBOX_TARGET_ID) + '" aria-labelledby="' + e(headingId) + '">'
     + '<h3 id="' + e(headingId) + '">' + e(group.label) + ' <small>(' + ideas.length + ')</small></h3>'
-    + (ideas.length ? '<ol class="idea-work-grid idea-list">' + ideas.map(i => ideaCard(model, i, prefix)).join('') + '</ol>' : '<p class="idea-empty">Keine Ideen in dieser Spalte.</p>')
+    + (ideas.length ? '<ol class="idea-work-grid idea-list">' + ideas.map((i, index) => ideaCard(model, i, prefix, { first: index === 0, last: index === ideas.length - 1 })).join('') + '</ol>' : '<p class="idea-empty">Keine Ideen in dieser Spalte.</p>')
     + '</section>';
 }
 
@@ -234,7 +246,7 @@ function renderWorkbench(model) {
     + '<div class="wb-actions">' + addButton('+ Neue Idee') + (model.voice.state === 'disabled' ? '' : voiceControl(model, prefix)) + '</div></div>';
   const groups = [{ id: null, label: 'Inbox – ohne Projekt' }, ...model.projects.map(p => ({ id: p.id, label: model.projectNames.get(p.id) }))];
   const byLane = new Map(groups.map(g => [g.id, []]));
-  for (const idea of model.ideas) byLane.get(idea.projectId && byLane.has(idea.projectId) ? idea.projectId : null).push(idea);
+  for (const idea of model.ideas) byLane.get(laneOf(idea, model.projectIds)).push(idea);
   const lanes = model.ideas.length
     ? groups.map(g => lane(model, g, byLane.get(g.id), prefix)).join('')
     : '<p>Noch keine Ideen.</p>';

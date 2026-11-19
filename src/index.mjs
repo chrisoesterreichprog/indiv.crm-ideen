@@ -58,10 +58,10 @@ export function render(target, ctx = {}, dimensions) {
 // indiv.crm-module-sdk#1 and must not be re-exported as a de-facto shared framework from here.
 export {
   applyIdeaCommand, authorizeIdea, checkActor, cleanText, commandFromAction, commandFromForm, COMMAND_TYPES,
-  ideaRef, isMediaRef, parseIdeaRef, projectRef, REF_PREFIX, SCHEMA_VERSION, TEXT_MAX, TRANSCRIPT_MAX, tenantScope, visibleIdeas,
+  ideaRef, isMediaRef, laneOf, parseIdeaRef, parseRevision, projectRef, REF_PREFIX, SCHEMA_VERSION, TEXT_MAX, TRANSCRIPT_MAX, tenantScope, visibleIdeas,
 } from './ideas.mjs';
 export { DEFAULT_SETTINGS, normalizeSettings, parseSettingsForm, TRANSFER_TARGET_IDS } from './settings.mjs';
 export { attachInterruptionGuards, createVoiceCapture, VOICE_CAPABILITIES, voiceStatus } from './voice.mjs';
 export { enabledTransferTargets, PROPOSAL_CONTRACT, PROPOSAL_TYPE, proposeTransfer, TRANSFER_TARGETS, WORKFLOW_CAPABILITY } from './transfer.mjs';
-export { DRAG_HELP, DRAG_IDLE, dragReducer, dropTargets, resolveDrop } from './dnd.mjs';
-export { LEGACY_SLOT_PRESETS, normalizeDimensions, RAILS, setupStatus, SIZE_CLASSES, SIZE_THRESHOLDS, sizeClassFor } from './views.mjs';
+export { DRAG_HELP, DRAG_IDLE, dragReducer, dropTargets, INBOX_TARGET_ID, projectTargetId, resolveDrop } from './dnd.mjs';
+export { COMPACT_TITLE_MAX, LEGACY_SLOT_PRESETS, normalizeDimensions, RAILS, setupStatus, SIZE_CLASSES, SIZE_THRESHOLDS, sizeClassFor } from './views.mjs';
